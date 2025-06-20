@@ -9,7 +9,7 @@ import { User } from "./models/User";
 import { Quest } from "./models/Quest";
 
 // Telegram Module
-import { Bot, InlineKeyboard, Context } from "grammy";
+import { Bot, InlineKeyboard, Context, webhookCallback } from "grammy";
 
 // import util
 import { calculateModParts } from './util'
@@ -18,7 +18,7 @@ import { calculateModParts } from './util'
 import { getRandomPrize } from "./helper/spin";
 
 // ** import constants
-import { prizes, Prize } from "./config";
+import { prizes, max_time_difference } from "./config";
 
 dotenv.config();
 
@@ -33,6 +33,7 @@ const gen = () => rs.generate(8);
 
 app.use(cors());
 app.use(express.json());
+// app.use("/telegram-webhook", webhookCallback(bot, "express"))
 
 mongoose
     .connect(process.env.MONGODB_URI as string)
@@ -133,16 +134,139 @@ app.get("/get-users", async (req: any, res: any) => {
 });
 
 // Get Quests
-app.get("/get-quests", async (req: any, res: any) => {
+app.post("/get-quests", async (req: any, res: any) => {
     try {
-        const quests = await Quest.find();
+        const username = req.body.userid;
+        const usertimestamp = req.body.usertime;
 
-        return res.status(200).json(quests);
+        if (!username) return res.status(400).json({ msg: "Bad request: No username" });
+        if (!usertimestamp) return res.status(400).json({ msg: "Bad request: No user timestamp" });
+
+        try {
+            const user = await User.findOne({ username })
+
+            if (!user) {
+                return res.status(404).json({ msg: "No user found" });
+            }
+
+            const tgActiveQuest = user.quests.activeTelegramQuest;
+            const xPostQuest = user.quests.postXQuest;
+
+            const tgActiveQuestCompletedDay = new Date(tgActiveQuest.completedDay)
+            const xPostQuestCompletedDay = new Date(xPostQuest.completedDay)
+
+            const usertime = new Date(usertimestamp)
+            const serverTime = new Date()
+
+            const maxFutureTime = new Date(serverTime.getTime() + max_time_difference);
+
+            if (usertime > maxFutureTime) {
+                return res.status(400).json({ msg: "Invalid time: user time too far ahead" });
+            }
+
+            const tgActiveQuestTodayCompleted =
+                usertime.getFullYear() === tgActiveQuestCompletedDay.getFullYear() &&
+                usertime.getMonth() === tgActiveQuestCompletedDay.getMonth() &&
+                usertime.getDate() === tgActiveQuestCompletedDay.getDate();
+
+            const xPostQuestTodayCompleted =
+                usertime.getFullYear() === xPostQuestCompletedDay.getFullYear() &&
+                usertime.getMonth() === xPostQuestCompletedDay.getMonth() &&
+                usertime.getDate() === xPostQuestCompletedDay.getDate();
+
+            if(tgActiveQuest.completed && !tgActiveQuestTodayCompleted) {
+                user.quests.activeTelegramQuest.completed = false;
+                await user.save()
+            }
+
+            if(xPostQuest.completed && !xPostQuestTodayCompleted) {
+                user.quests.postXQuest.completed = false;
+                await user.save()
+            }
+
+            return res.status(200).json(user.quests)
+        }
+        catch (error) {
+            return res.status(500).json({ msg: "Internal server error" });
+        }
     } catch (error) {
         console.error("Fetching all the users error: ", error);
         return res.status(500).json({ msg: "Internal server error" });
     }
 });
+
+app.post("/join-telegram", async (req: any, res: any) => {
+    const username = req.body.userid;
+    if (!username) return res.status(400).json({ msg: "Bad request: No username" });
+
+    try {
+        const user = await User.findOne({ username })
+
+        if (!user) {
+            return res.status(404).json({ msg: "No user found" });
+        }
+
+        if(!user.quests.joinTelegramQuest.completed) {
+            user.quests.joinTelegramQuest.completed = true
+            user.points += 10000
+
+            await user.save()
+        }
+    }
+    catch(error) {
+        return res.status(500).json({ msg: "Internal server error" });
+    }
+})
+
+app.post("/follow-x", async (req: any, res: any) => {
+    const username = req.body.userid;
+    if (!username) return res.status(400).json({ msg: "Bad request: No username" });
+
+    try {
+        const user = await User.findOne({ username })
+
+        if (!user) {
+            return res.status(404).json({ msg: "No user found" });
+        }
+
+        if(!user.quests.followXQuest.completed) {
+            user.quests.followXQuest.completed = true
+            user.points += 10000
+
+            await user.save()
+        }
+    }
+    catch(error) {
+        return res.status(500).json({ msg: "Internal server error" });
+    }
+})
+
+app.post("/post-x", async (req: any, res: any) => {
+    const username = req.body.userid;
+    const usertimestamp = req.body.usertime;
+
+    if (!username) return res.status(400).json({ msg: "Bad request: No username" });
+
+    try {
+        const user = await User.findOne({ username })
+
+        if (!user) {
+            return res.status(404).json({ msg: "No user found" });
+        }
+
+        if(!user.quests.postXQuest.completed) {
+            user.quests.postXQuest.completed = true
+            user.points += 10000
+
+            user.quests.postXQuest.completedDay = usertimestamp
+
+            await user.save()
+        }
+    }
+    catch(error) {
+        return res.status(500).json({ msg: "Internal server error" });
+    }
+})
 
 app.post("/complete-quest", async (req: any, res: any) => {
     const username = req.body.userid;
@@ -293,7 +417,7 @@ bot.command("start", async (ctx: Context) => {
 
         const user = await User.findOne({ username: userid });
 
-        if (!user && receiveid && ( receiveid != userid )) {
+        if (!user && receiveid && (receiveid != userid)) {
             // Register User
             const quest = await Quest.findOne({ type: "refer" });
 
@@ -309,6 +433,10 @@ bot.command("start", async (ctx: Context) => {
                 sender.spin.count += 3;
                 // Give 1000 points ro referrer
                 sender.points += 20000;
+
+                if(!sender.quests.referFriendQuest.completed) {
+                    sender.quests.referFriendQuest.completed = true
+                }
 
                 await sender.save();
 

@@ -1,5 +1,53 @@
 import mongoose from "mongoose";
 
+// Define quests
+const Quest = new mongoose.Schema({
+    completed: {
+        type: Boolean,
+        default: false
+    },
+    daily: {
+        type: Boolean,
+        default: false
+    },
+    completedDay: {
+        type: Number,
+        required: true,
+        default: Date.now()
+    }
+}, { _id: false })
+
+const Quests = new mongoose.Schema({
+    joinTelegramQuest: {
+        type: Quest,
+        default: () => ({})
+    },
+    activeTelegramQuest: {
+        type: Quest,
+        default: {
+            completed: false,
+            daily: true,
+            completedDay: Date.now()
+        }
+    },
+    followXQuest: {
+        type: Quest,
+        default: () => ({})
+    },
+    referFriendQuest: {
+        type: Quest,
+        default: () => ({})
+    },
+    postXQuest: {
+        type: Quest,
+        default: {
+            completed: false,
+            daily: true,
+            completedDay: Date.now()
+        }
+    }
+}, { _id: false })
+
 // Define the nested spin schema
 const SpinSchema = new mongoose.Schema({
     count: {
@@ -44,6 +92,10 @@ const UserSchema = new mongoose.Schema({
     spin: {
         type: SpinSchema,
         default: () => ({}) // ensure default values are applied
+    },
+    quests: {
+        type: Quests,
+        default: () => ({})
     }
 });
 

@@ -13,3 +13,5 @@ export const prizes: Prize[] = [
     { amount: 50000, probability: 3 },
     { amount: 100000, probability: 2 },
 ];
+
+export const max_time_difference = 3600 * 1000 * 26
